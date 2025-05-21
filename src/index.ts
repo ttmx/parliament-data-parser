@@ -1,6 +1,7 @@
 import { parseArgs } from "util";
 import { getLegislatureData } from "./downloader";
 import type { Legislature } from "./legislature";
+import { readableStreamToText } from "bun";
 
 async function main() {
   // Parse command line arguments
@@ -67,30 +68,27 @@ async function fuzzyFindInitiative(initiatives: Legislature[]) {
 
   // Use fzf for fuzzy finding
   try {
-    // Write titles to a temporary file
-    const tempFile = `/tmp/initiatives-${Date.now()}.txt`;
-    Bun.write(tempFile, initiativeTitles.join('\n'));
-
-    // Run fzf and handle output using a more interactive approach
     console.log("Starting fuzzy search...");
 
-    const resultFile = `/tmp/fzf-result-${Date.now()}.txt`;
-
-    // This is a more direct approach that should work better with interactive CLI tools
-    const fzfProcess = Bun.spawn(['sh', '-c', `cat ${tempFile} | fzf --height 50% --layout=reverse --border > ${resultFile}`]);
-
+    // Create a process with fzf directly, passing initiative titles via stdin
+    const initiativesInput = initiativeTitles.join('\n');
+    const fzfProcess = Bun.spawn(['fzf', '--height', '50%', '--layout=reverse', '--border'], {
+      stdin: 'pipe',
+      stdout: 'pipe',
+      stderr: 'inherit',
+    });
+    
+    // Write the initiative titles to fzf's stdin
+    fzfProcess.stdin.write(initiativesInput);
+    fzfProcess.stdin.end();
+    
     // Wait for the process to complete and get the selected item
-    const l = await fzfProcess.exited;
-
-    // We need to read the selection result differently since stdio is inherited
-    // After fzf exits, it leaves the selected item in the terminal output
-    // We need to have fzf write its selection to a file
-
-
-    const selectedInitiative = await Bun.file(resultFile).text();
-
-    // Clean up the temporary files
-    // execSync(`rm ${tempFile} ${resultFile}`, { encoding: 'utf-8' });
+    const exitCode = await fzfProcess.exited;
+    if (exitCode !== 0) {
+      console.log("fzf process exited with code:", exitCode);
+      return;
+    }
+    const selectedInitiative = await readableStreamToText(fzfProcess.stdout);
 
     if (!selectedInitiative) {
       console.log("No initiative selected.");
